@@ -1,0 +1,12 @@
+import {env} from 'cloudflare:workers';
+import {getChatGPTUser} from '@/app/chatgpt-auth';
+import {DEFAULT_SETTINGS,Settings} from './domain';
+export function db(){if(!env.DB)throw new Error('Storage unavailable');return env.DB;}
+export class ApiError extends Error{constructor(public status:number,message:string){super(message)}}
+export async function identity(){const u=await getChatGPTUser();if(!u)throw new ApiError(401,'Войдите, чтобы продолжить.');const owner=(env as unknown as {AURA_OWNER_EMAIL?:string}).AURA_OWNER_EMAIL;let role='customer';if(owner&&u.email.toLowerCase()===owner.toLowerCase())role='owner';else{const s=await db().prepare('SELECT role FROM staff WHERE email = ?').bind(u.email.toLowerCase()).first<{role:string}>();if(s)role=s.role;}return {...u,role};}
+export async function getSettings():Promise<Settings>{const row=await db().prepare('SELECT value FROM settings WHERE id = 1').first<{value:string}>();return {...DEFAULT_SETTINGS,...(row?JSON.parse(row.value):{})};}
+export async function body(req:Request){if(!req.headers.get('content-type')?.includes('application/json'))throw new ApiError(415,'Нужен JSON-запрос.');const origin=req.headers.get('origin');if(origin&&origin!==new URL(req.url).origin)throw new ApiError(403,'Запрос с другого сайта запрещён.');if(req.headers.get('sec-fetch-site')==='cross-site')throw new ApiError(403,'Запрос с другого сайта запрещён.');const txt=await req.text();if(txt.length>12000)throw new ApiError(413,'Слишком много данных.');try{return JSON.parse(txt)}catch{throw new ApiError(400,'Некорректные данные.')}}
+export function json(data:unknown,status=200){return Response.json(data,{status,headers:{'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}})}
+export function error(e:unknown){if(e instanceof ApiError)return json({error:e.message},e.status);if(String(e).includes('UNIQUE constraint failed: orders.bay'))return json({error:'В этом боксе ещё обслуживается автомобиль. Сначала завершите его мойку и контроль качества.'},409);console.error('AURA request failed',e instanceof Error?e.message:'unknown');return json({error:'Сервис временно недоступен. Попробуйте ещё раз — введённые данные сохранены в форме.'},503)}
+export function manager(role:string){if(!['owner','manager'].includes(role))throw new ApiError(403,'Доступ только для управляющего.');}
+export function employee(role:string){if(!['owner','manager','employee'].includes(role))throw new ApiError(403,'Доступ только для сотрудников.');}

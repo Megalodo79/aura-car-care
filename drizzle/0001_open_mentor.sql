@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `orders_active_bay` ON `orders` (`bay`) WHERE "orders"."status" IN ('accepted','washing','quality');
